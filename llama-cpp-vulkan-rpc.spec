@@ -1,0 +1,160 @@
+# Based on the RPM spec file originally created by Unrest6585 (https://github.com)
+# Modified to enable GGML_RPC=ON and package ggml-rpc-server
+
+# Version is set to the upstream stable release (e.g. 0.7.0) and upstream_tag to
+# the bXXXX build that release pins (via its nightly-tag.txt) by the build
+# workflow. For local builds, run build.sh which patches both lines automatically.
+%global upstream_tag b12359
+%define _privlibdir %{_libdir}/%{name}
+
+# Numeric build number derived from the bXXXX release tag (e.g. b9413 -> 9413).
+# We build from a release tarball, which has no .git, so llama.cpp's cmake would
+# otherwise stamp the binaries as "version: 0 (unknown)". Feed it explicitly.
+%define llama_build_number %(echo %{upstream_tag} | sed 's/^b//')
+
+Name:           llama-cpp-vulkan-rpc
+Version:        1.0.0
+Release:        1%{?dist}
+Summary:        LLM inference engine in C/C++ with Vulkan GPU and RPC acceleration
+License:        MIT
+URL:            https://github.com/ggml-org/llama.cpp
+Source0:        https://github.com/ggml-org/llama.cpp/archive/refs/tags/v%{version}.tar.gz
+# Prebuilt web UI assets, shipped as a release artifact alongside each tag.
+# Bundled into the SRPM so %%build never fetches the UI over the network (see %%prep).
+Source1:        https://github.com/ggml-org/llama.cpp/releases/download/%{upstream_tag}/llama-%{upstream_tag}-ui.tar.gz
+
+BuildRequires:  cmake >= 3.14
+BuildRequires:  gcc-c++
+BuildRequires:  ninja-build
+BuildRequires:  vulkan-devel
+BuildRequires:  glslc
+BuildRequires:  spirv-headers-devel
+BuildRequires:  libcurl-devel
+
+Requires:       %{name}-libs%{?_isa} = %{version}-%{release}
+Requires:       vulkan-loader
+
+%description
+llama.cpp is an LLM inference engine written in C/C++. This build
+enables the Vulkan backend for GPU-accelerated inference on any
+Vulkan-capable GPU (AMD, Intel, NVIDIA) and distributed RPC server support (ggml-rpc-server).
+
+%package libs
+Summary:        LLM inference engine in C/C++ with Vulkan GPU and RPC acceleration
+Requires:       vulkan-loader
+
+%description libs
+Shared libraries for llama.cpp, including the Vulkan and RPC compute backends.
+Installed to a private directory to avoid conflicts with other ggml consumers.
+
+%prep
+%autosetup -n llama.cpp-%{version}
+
+# Pre-stage the prebuilt web UI so the build never fetches it over the network at
+# cmake configure time. Copr builders hit intermittent SSL failures talking to
+# huggingface.co; a partial download leaves a zero-byte asset that makes the
+# generated ui.cpp contain an illegal zero-size array and breaks the build. We
+# bundle the upstream UI release artifact (Source1) and drop it into tools/ui/dist
+# so ui-assets.cmake takes its "pre-built assets" path (priority 1) and returns
+# before any download. build.json is the only asset the artifact omits (the npm
+# vite plugin generates it); synthesize it with the build number.
+mkdir -p tools/ui/dist
+tar -xzf %{SOURCE1} -C tools/ui/dist --strip-components=1
+printf '{"version":"%s"}' '%{llama_build_number}' > tools/ui/dist/build.json
+
+%build
+%cmake \
+    -DGGML_NATIVE=OFF \
+    -DGGML_VULKAN=ON \
+    -DGGML_RPC=ON \
+    -DGGML_BACKEND_DL=ON \
+    -DGGML_CPU_ALL_VARIANTS=ON \
+    -DLLAMA_CURL=ON \
+    -DLLAMA_USE_PREBUILT_UI=OFF \
+    -DLLAMA_BUILD_IS_DEV=OFF \
+    -DLLAMA_BUILD_NUMBER=%{llama_build_number} \
+    -DLLAMA_BUILD_COMMIT=%{upstream_tag} \
+    -DBUILD_SHARED_LIBS=ON \
+    -DCMAKE_INSTALL_RPATH=%{_privlibdir} \
+    -DGGML_BACKEND_DIR=%{_privlibdir} \
+    -G Ninja
+%cmake_build
+
+%install
+%cmake_install
+
+# Move all shared libraries to private directory to avoid conflicts with
+# other ggml consumers (e.g. whisper-cpp-libs) that ship the same libggml*.so
+mkdir -p %{buildroot}%{_privlibdir}
+# Versioned libraries (libggml.so.0, libllama.so.0, ...) and their soname symlinks.
+mv %{buildroot}%{_libdir}/lib*.so.* %{buildroot}%{_privlibdir}/
+# Upstream (>= b9294) builds each CLI tool as an unversioned shared library
+# (libllama-cli-impl.so, libllama-server-impl.so, ...) whose SONAME is the bare
+# filename. These are real runtime libraries, not devel symlinks, so move them
+# too -- otherwise the launcher binaries are left with unsatisfiable Requires.
+find %{buildroot}%{_libdir} -maxdepth 1 -type f -name '*.so' -exec mv -t %{buildroot}%{_privlibdir}/ {} +
+
+# ld.so.conf drop-in so the dynamic linker finds our private libs
+mkdir -p %{buildroot}%{_sysconfdir}/ld.so.conf.d
+echo %{_privlibdir} > %{buildroot}%{_sysconfdir}/ld.so.conf.d/%{name}.conf
+
+# Remove devel files (headers, cmake configs, unversioned .so symlinks, pkgconfig).
+# Only delete symlinks here: the real .so runtime libraries were moved to the
+# private directory above, so anything matching *.so left in %{_libdir} is a
+# devel symlink (e.g. libggml.so -> libggml.so.0).
+rm -rf %{buildroot}%{_includedir}
+rm -rf %{buildroot}%{_libdir}/cmake
+rm -rf %{buildroot}%{_libdir}/pkgconfig
+find %{buildroot}%{_libdir} -type l -name '*.so' -delete
+
+# Remove everything except llama-* binaries (test-*, convert scripts, and any
+# other upstream tools that don't match our package's file list)
+find %{buildroot}%{_bindir} -type f ! -name 'llama-*' ! -name 'ggml-rpc-server' -delete
+
+%post libs -p /sbin/ldconfig
+%postun libs -p /sbin/ldconfig
+
+%files
+%license LICENSE
+%doc README.md
+%{_bindir}/llama-*
+%{_bindir}/ggml-rpc-server
+
+%files libs
+%license LICENSE
+%dir %{_privlibdir}
+%{_privlibdir}/lib*.so*
+%{_sysconfdir}/ld.so.conf.d/%{name}.conf
+
+%changelog
+* Tue Nov 17 2026 GitHub Actions <noreply@github.com> - 1.0.0-1
+- Automated build based on Unrest6585/fedora-llamacpp with -DGGML_RPC=ON and ggml-rpc-server
+* Fri Oct 16 2026 Unrest6585 <128709964+Unrest6585@users.noreply.github.com> - 0-2
+- Build from the vX.Y.Z release tarball and pass -DLLAMA_BUILD_IS_DEV=OFF, per
+  upstream's packaging guidance (docs/release.md), so the version is reported as
+  X.Y.Z instead of X.Y.Z-dev
+
+* Fri Oct 16 2026 Unrest6585 <128709964+Unrest6585@users.noreply.github.com> - 0-1
+- Version the package after the upstream stable release (e.g. 0.7.0) instead of
+  the bXXXX build tag; the pinned bXXXX tag is kept in %%{upstream_tag} and still
+  selects the sources and stamps --version.
+
+* Sat Jun 13 2026 Unrest6585 <128709964+Unrest6585@users.noreply.github.com> - b0-1
+- Bundle the prebuilt web UI (Source1) and stage it into tools/ui/dist in %%prep,
+  and build with -DLLAMA_USE_PREBUILT_UI=OFF, so the build never downloads UI
+  assets at configure time. Fixes intermittent failures where a flaky huggingface
+  download left a zero-byte asset and produced an uncompilable zero-size array.
+
+* Sat May 30 2026 Unrest6585 <128709964+Unrest6585@users.noreply.github.com> - b0-1
+- Stamp build version from the release tag (LLAMA_BUILD_NUMBER/COMMIT) so
+  --version reports the build instead of "0 (unknown)"
+- Build portable CPU backends via GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS,
+  loaded from the private dir (GGML_BACKEND_DIR), for near-native CPU speed
+  on any x86-64 while staying portable
+
+* Fri May 29 2026 Unrest6585 <128709964+Unrest6585@users.noreply.github.com> - b0-1
+- Package unversioned libllama-*-impl.so tool libraries (upstream >= b9294)
+  in -libs; only delete devel .so symlinks so launcher binaries resolve
+
+* Thu Apr 16 2026 Unrest6585 <128709964+Unrest6585@users.noreply.github.com> - b0-1
+- Add missing SPIR-V headers build dependency for Vulkan builds
