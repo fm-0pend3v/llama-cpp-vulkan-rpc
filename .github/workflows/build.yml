@@ -145,12 +145,32 @@ jobs:
 
           version = "${{ needs.check-version.outputs.version }}"
           upstream_tag = "${{ needs.check-version.outputs.tag }}"
+          workspace_spec = os.path.join(os.environ["GITHUB_WORKSPACE"], "llama-cpp-vulkan-rpc.spec")
+
+          release_num = 1
+          prev_entries = ""
+
+          if os.path.exists(workspace_spec):
+              with open(workspace_spec, "r", encoding="utf-8") as f:
+                  old_spec = f.read()
+              ver_m = re.search(r'^Version:\s+(\S+)', old_spec, flags=re.M)
+              rel_m = re.search(r'^Release:\s+(\d+)', old_spec, flags=re.M)
+              if ver_m and rel_m and ver_m.group(1) == version:
+                  release_num = int(rel_m.group(1)) + 1
+
+              if "%changelog\n" in old_spec:
+                  old_cl = old_spec.split("%changelog\n", 1)[1]
+                  upstream_marker = re.search(r'^\* .* Unrest6585 ', old_cl, flags=re.M)
+                  if upstream_marker:
+                      prev_entries = old_cl[:upstream_marker.start()].strip()
+
+          print(f"Versione impostata: {version}-{release_num}")
 
           with open("/tmp/upstream.spec", "r", encoding="utf-8") as f:
               content = f.read()
 
           header = (
-              "# Based on the RPM spec file originally created by Unrest6585 (https://github.com)\n"
+              "# Based on the RPM spec file originally created by Unrest6585 (https://github.com/Unrest6585/fedora-llamacpp)\n"
               "# Modified to enable GGML_RPC=ON and package ggml-rpc-server\n\n"
           )
           content = header + content
@@ -158,7 +178,7 @@ jobs:
           content = re.sub(r'^%global upstream_tag\s+.*', f'%global upstream_tag {upstream_tag}', content, flags=re.M)
           content = re.sub(r'^Name:\s+.*', 'Name:           llama-cpp-vulkan-rpc', content, flags=re.M)
           content = re.sub(r'^Version:\s+.*', f'Version:        {version}', content, flags=re.M)
-          content = re.sub(r'^Release:\s+.*', 'Release:        1%{?dist}', content, flags=re.M)
+          content = re.sub(r'^Release:\s+.*', f'Release:        {release_num}%{{?dist}}', content, flags=re.M)
           content = re.sub(r'^Summary:\s+.*', 'Summary:        LLM inference engine in C/C++ with Vulkan GPU and RPC acceleration', content, flags=re.M)
 
           content = content.replace(
@@ -188,12 +208,19 @@ jobs:
               )
 
           changelog_date = datetime.now(timezone.utc).strftime("%a %b %d %Y")
-          new_entry = (
-              f"%changelog\n"
-              f"* {changelog_date} GitHub Actions <noreply@github.com> - {version}-1\n"
+          current_entry = (
+              f"* {changelog_date} GitHub Actions <fm-0pend3v/llama-cpp-vulkan-rpc.git>\n"
               f"- Automated build based on Unrest6585/fedora-llamacpp with -DGGML_RPC=ON and ggml-rpc-server\n"
+              f"- Upstream llama.cpp release: v{version} (build: {upstream_tag}, commit: {commit_sha})\n"
+              f"- Package version: llama-cpp-vulkan-rpc-{version}-{release_num}"
           )
-          content = content.replace("%changelog\n", new_entry, 1)
+
+          if prev_entries:
+              combined_entries = f"{current_entry}\n\n{prev_entries}\n\n"
+          else:
+              combined_entries = f"{current_entry}\n\n"
+
+          content = content.replace("%changelog\n", f"%changelog\n{combined_entries}", 1)
 
           spec_path = os.path.expanduser("~/rpmbuild/SPECS/llama-cpp-vulkan-rpc.spec")
           with open(spec_path, "w", encoding="utf-8") as f:
