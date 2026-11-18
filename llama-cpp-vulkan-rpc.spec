@@ -1,4 +1,4 @@
-# Based on the RPM spec file originally created by Unrest6585 (https://github.com)
+# Based on the RPM spec file originally created by Unrest6585 (https://github.com/Unrest6585/fedora-llamacpp)
 # Modified to enable GGML_RPC=ON and package ggml-rpc-server
 
 # Version is set to the upstream stable release (e.g. 0.7.0) and upstream_tag to
@@ -14,7 +14,7 @@
 
 Name:           llama-cpp-vulkan-rpc
 Version:        1.0.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        LLM inference engine in C/C++ with Vulkan GPU and RPC acceleration
 License:        MIT
 URL:            https://github.com/ggml-org/llama.cpp
@@ -127,8 +127,14 @@ find %{buildroot}%{_bindir} -type f ! -name 'llama-*' ! -name 'ggml-rpc-server' 
 %{_sysconfdir}/ld.so.conf.d/%{name}.conf
 
 %changelog
+* Wed Nov 18 2026 GitHub Actions <fm-0pend3v/llama-cpp-vulkan-rpc.git>
+- Automated build based on Unrest6585/fedora-llamacpp with -DGGML_RPC=ON and ggml-rpc-server
+- Upstream llama.cpp release: v1.0.0 (build: b12359)
+- Package version: llama-cpp-vulkan-rpc-1.0.0-2
+
 * Tue Nov 17 2026 GitHub Actions <noreply@github.com> - 1.0.0-1
 - Automated build based on Unrest6585/fedora-llamacpp with -DGGML_RPC=ON and ggml-rpc-server
+
 * Fri Oct 16 2026 Unrest6585 <128709964+Unrest6585@users.noreply.github.com> - 0-2
 - Build from the vX.Y.Z release tarball and pass -DLLAMA_BUILD_IS_DEV=OFF, per
   upstream's packaging guidance (docs/release.md), so the version is reported as
