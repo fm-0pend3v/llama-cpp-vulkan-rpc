@@ -211,7 +211,7 @@ jobs:
           current_entry = (
               f"* {changelog_date} GitHub Actions <fm-0pend3v/llama-cpp-vulkan-rpc.git>\n"
               f"- Automated build based on Unrest6585/fedora-llamacpp with -DGGML_RPC=ON and ggml-rpc-server\n"
-              f"- Upstream llama.cpp release: v{version} (build: {upstream_tag}, commit: {commit_sha})\n"
+              f"- Upstream llama.cpp release: v{version} (build: {upstream_tag})\n"
               f"- Package version: llama-cpp-vulkan-rpc-{version}-{release_num}"
           )
 
